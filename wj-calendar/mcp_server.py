@@ -4,6 +4,7 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 import db
+import gsync
 
 mcp = FastMCP("wjcal")
 
@@ -98,8 +99,14 @@ def update_item(
 
 @mcp.tool()
 def complete_item(item_id: int, done: bool = True) -> dict:
-    """할 일을 완료(done=True) 또는 완료 취소(False) 처리한다."""
-    return _with(lambda c: db.update_item(c, item_id, {"done": done}))
+    """할 일을 완료(done=True) 또는 완료 취소(False) 처리한다. 구글에서 온 할 일이면 구글에도 반영된다."""
+    return _with(lambda c: gsync.toggle_done(c, db.get_item(c, item_id), done))
+
+
+@mcp.tool()
+def sync_google() -> dict:
+    """구글 캘린더, 구글 할 일을 지금 바로 가져온다(평소엔 5분마다 자동). 구글 항목(source='google')은 읽기 전용이라 수정, 삭제는 구글에서 해야 한다."""
+    return gsync.sync()
 
 
 @mcp.tool()

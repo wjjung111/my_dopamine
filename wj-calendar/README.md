@@ -13,7 +13,7 @@
 | 파일 | 역할 |
 |---|---|
 | `db.py` | 저장소. 시간은 한국 시간 문자열(`YYYY-MM-DDTHH:MM`)로 저장 |
-| `server.py` | 웹 서버 `http://127.0.0.1:8765` + JSON API (`/api/items`, `/api/calendars`, `/api/rev`) |
+| `server.py` | 웹 서버 `http://127.0.0.1:18765` + JSON API (`/api/items`, `/api/calendars`, `/api/rev`) |
 | `static/index.html` | 화면 (빌드 없는 순수 JS, 3초마다 변경 확인) |
 | `mcp_server.py` | Claude용 MCP 커넥터. 웹 서버 없이 DB에 직접 씀 |
 | `start.vbs` | 실행기 (`/server` 인자 = 서버만) |

@@ -1,4 +1,4 @@
-"""우진 캘린더 웹 서버. http://127.0.0.1:8765 에서 화면과 JSON API를 제공한다."""
+"""우진 캘린더 웹 서버. http://127.0.0.1:18765 에서 화면과 JSON API를 제공한다."""
 import json
 import mimetypes
 import sys
@@ -7,8 +7,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import db
+import gsync
 
-HOST, PORT = "127.0.0.1", 8765
+HOST, PORT = "127.0.0.1", 18765
 STATIC = Path(__file__).resolve().parent / "static"
 
 
@@ -59,12 +60,19 @@ class H(BaseHTTPRequestHandler):
                 return {"rev": db.revision(con), "items": db.list_items(con, qs.get("from"), qs.get("to"))}
             if method == "POST":
                 return db.create_item(con, self._json())
+        if p == ["sync"]:
+            if method == "POST":
+                return gsync.sync()
+            return dict(gsync.STATUS) | {"logged_in": gsync.logged_in()}
         if len(p) == 2 and p[0] == "items":
             iid = int(p[1])
             if method == "GET":
                 return db.get_item(con, iid)
             if method == "PATCH":
-                return db.update_item(con, iid, self._json())
+                body = self._json()
+                if set(body) == {"done"}:
+                    return gsync.toggle_done(con, db.get_item(con, iid), bool(body["done"]))
+                return db.update_item(con, iid, body)
             if method == "DELETE":
                 return db.delete_item(con, iid)
         raise KeyError("없는 주소")
@@ -98,6 +106,7 @@ def main():
         print("이미 실행 중입니다.")
         return
     db.connect().close()
+    gsync.start_background(300)  # 5분마다 구글 동기화(로그인돼 있을 때만)
     print(f"우진 캘린더: http://{HOST}:{PORT}")
     try:
         srv.serve_forever()

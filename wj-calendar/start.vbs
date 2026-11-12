@@ -5,7 +5,7 @@ Dim sh, fso, base, url, ego, http, up, i
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 base = fso.GetParentFolderName(WScript.ScriptFullName)
-url = "http://127.0.0.1:8765/"
+url = "http://127.0.0.1:18765/"
 
 Function IsUp()
   On Error Resume Next

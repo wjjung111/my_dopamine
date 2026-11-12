@@ -65,6 +65,21 @@ def _init(con: sqlite3.Connection) -> None:
     if con.execute("SELECT COUNT(*) FROM calendars").fetchone()[0] == 0:
         for i, (cid, name, color) in enumerate(DEFAULT_CALENDARS):
             con.execute("INSERT INTO calendars(id,name,color,sort) VALUES(?,?,?,?)", (cid, name, color, i))
+    # v2: 구글 동기화용 칸
+    icols = {r[1] for r in con.execute("PRAGMA table_info(items)")}
+    for col in ("color", "ext_id", "source"):
+        if col not in icols:
+            con.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_items_ext ON items(ext_id) WHERE ext_id IS NOT NULL")
+    ccols = {r[1] for r in con.execute("PRAGMA table_info(calendars)")}
+    if "source" not in ccols:
+        con.execute("ALTER TABLE calendars ADD COLUMN source TEXT")
+        # 임시 캘린더 정리: 쓰지 않은 것은 지우고 기본 두 개만 이름 정리
+        for cid in ("silmu", "private", "etc"):
+            if not con.execute("SELECT 1 FROM items WHERE calendar_id=?", (cid,)).fetchone():
+                con.execute("DELETE FROM calendars WHERE id=?", (cid,))
+        con.execute("UPDATE calendars SET name='우진 캘린더' WHERE id='woojin'")
+        con.execute("UPDATE calendars SET name='내 할 일' WHERE id='tasks'")
 
 
 def _bump(con: sqlite3.Connection) -> None:
@@ -175,8 +190,20 @@ def create_item(con, data: dict) -> dict:
     return get_item(con, cur.lastrowid)
 
 
-def update_item(con, item_id: int, data: dict) -> dict:
+class ReadOnly(ValueError):
+    pass
+
+
+def _guard(cur: dict, data: dict | None = None) -> None:
+    """구글에서 가져온 항목은 완료 체크 말고는 여기서 못 고친다(구글이 원본)."""
+    if cur.get("source") == "google" and (data is None or set(data) - {"done"}):
+        raise ReadOnly("구글 캘린더에서 가져온 항목입니다. 수정, 삭제는 구글 캘린더에서 해 주세요(완료 체크만 가능).")
+
+
+def update_item(con, item_id: int, data: dict, force: bool = False) -> dict:
     cur = get_item(con, item_id)
+    if not force:
+        _guard(cur, data)
     merged = {**{k: cur[k] for k in ITEM_FIELDS}, **{k: data[k] for k in ITEM_FIELDS if k in data}}
     # 날짜만 바꾸면 시각은 그대로 옮긴다
     if "date" in data and data["date"] and "start" not in data and cur.get("start"):
@@ -198,7 +225,7 @@ def update_item(con, item_id: int, data: dict) -> dict:
 
 
 def delete_item(con, item_id: int) -> dict:
-    get_item(con, item_id)
+    _guard(get_item(con, item_id))
     con.execute("DELETE FROM items WHERE id=?", (item_id,))
     _bump(con)
     return {"deleted": item_id}

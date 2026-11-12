@@ -151,6 +151,7 @@ aside.tasks.hide{display:none}
     <div class="title" id="title"></div>
     <div class="spacer"></div>
     <span class="sync" id="sync"></span>
+    <button class="iconbtn" id="btnSync" title="구글에서 지금 가져오기">↻</button>
     <div class="seg"><button class="on">주</button></div>
     <button class="iconbtn" id="btnTasks" title="할 일 패널">☑</button>
   </header>
@@ -236,7 +237,7 @@ function chipLabel(it) {
 
 /* ---------- API ---------- */
 async function api(method, path, body) {
-  const r = await fetch("/api" + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch("/api" + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : (method === "POST" ? "{}" : undefined) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
@@ -245,13 +246,12 @@ async function load() {
   const [it, cals] = await Promise.all([api("GET", "/items"), api("GET", "/calendars")]);
   S.items = it.items; S.rev = it.rev; S.cals = cals;
   render();
-  $("#sync").textContent = "";
 }
 async function poll() {
   try {
     const { rev } = await api("GET", "/rev");
     if (rev !== S.rev) await load();
-    $("#sync").textContent = "";
+    if ($("#sync").textContent.includes("서버 연결")) syncStatus();
   } catch { $("#sync").textContent = "⚠ 서버 연결 끊김"; }
 }
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2200); }
@@ -259,6 +259,13 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.ad
 /* ---------- 렌더 ---------- */
 const calOf = id => S.cals.find(c => c.id === id) || { color: "#039be5", visible: true, name: "" };
 const visible = it => calOf(it.calendar_id).visible;
+const colorOf = it => it.color || calOf(it.calendar_id).color;
+function inkOf(bg) { // 밝은 배경엔 검은 글씨
+  const h = (bg || "#000").replace("#", ""); const n = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(n.substr(i, 2), 16));
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 170 ? "#1f1f1f" : "#fff";
+}
+const paint = it => { const c = colorOf(it); return `background:${c};color:${inkOf(c)}`; };
 
 function render() { renderHeader(); renderMini(); renderCals(); renderWeek(); renderTasks(); }
 
@@ -292,7 +299,20 @@ function renderMini() {
 }
 
 function renderCals() {
-  $("#calList").innerHTML = S.cals.map(c => `<div class="cal-row" data-cal="${c.id}"><span class="box" style="border-color:${c.color};background:${c.visible ? c.color : "transparent"}">${c.visible ? "✓" : ""}</span>${esc(c.name)}</div>`).join("");
+  const row = c => `<div class="cal-row" data-cal="${c.id}"><span class="box" style="border-color:${c.color};background:${c.visible ? c.color : "transparent"};color:${inkOf(c.color)}">${c.visible ? "✓" : ""}</span>${esc(c.name)}</div>`;
+  const local = S.cals.filter(c => c.source !== "google"), g = S.cals.filter(c => c.source === "google");
+  $("#calList").innerHTML = local.map(row).join("") + (g.length ? `<h4 style="margin-top:18px">구글 캘린더</h4>` + g.map(row).join("") : "");
+}
+async function syncStatus() {
+  try {
+    const s = await api("GET", "/sync");
+    const el = $("#sync");
+    if (!s.logged_in) { el.textContent = "구글 미연결"; el.title = "google_login.bat 실행 필요"; return; }
+    if (!s.last) { el.textContent = "구글 동기화 대기"; return; }
+    const m = Math.round((Date.now() / 1000 - s.last) / 60);
+    el.textContent = s.ok ? `구글 ${m < 1 ? "방금" : m + "분 전"} 동기화` : "⚠ 구글 동기화 실패";
+    el.title = s.message || "";
+  } catch {}
 }
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
@@ -340,8 +360,7 @@ function renderWeek() {
     let h = "";
     if (ds === tStr && overdue) h += `<div class="pending" data-pending>◎ 대기 중인 할 일 ${overdue}개</div>`;
     for (const it of S.items.filter(i => i.date === ds && !i.start && visible(i))) {
-      const c = calOf(it.calendar_id).color;
-      h += `<div class="adchip ${it.done ? "done" : ""}" data-id="${it.id}" style="background:${c}" title="${esc(it.title)}">${it.kind === "task" ? `<span class="circle" data-toggle="${it.id}">${it.done ? "✓" : ""}</span>` : ""}<span>${esc(it.title)}</span></div>`;
+      h += `<div class="adchip ${it.done ? "done" : ""}" data-id="${it.id}" style="${paint(it)}" title="${esc(it.title)}">${it.kind === "task" ? `<span class="circle" data-toggle="${it.id}">${it.done ? "✓" : ""}</span>` : ""}<span>${esc(it.title)}</span></div>`;
     }
     return `<div class="adcell" data-newday="${ds}">${h}</div>`;
   }).join("");
@@ -352,14 +371,14 @@ function renderWeek() {
     const ds = ymd(d);
     g += `<div class="col ${ds === tStr ? "today" : ""}" data-col="${ds}">`;
     for (const sg of segmentsFor(d)) {
-      const it = sg.it, c = calOf(it.calendar_id).color;
+      const it = sg.it;
       const hpx = (sg.bot - sg.top) * HOUR - 2;
       const w = 100 / sg.ncol, left = sg.col * w;
       const short = hpx < 34;
       const label = rangeLabel(it);
       const isTask = it.kind === "task";
       g += `<div class="ev ${isTask ? "task" : ""} ${it.done ? "done" : ""} ${short ? "short" : ""}" data-id="${it.id}"
-        style="top:${sg.top*HOUR}px;height:${hpx}px;left:calc(${left}% + 1px);width:calc(${w}% - 8px);background:${c}" title="${esc(it.title)}\n${label}">
+        style="top:${sg.top*HOUR}px;height:${hpx}px;left:calc(${left}% + 1px);width:calc(${w}% - 8px);${paint(it)}" title="${esc(it.title)}\n${label}">
         <div class="t">${isTask ? `<span class="circle" data-toggle="${it.id}">${it.done ? "✓" : ""}</span>` : ""}<span>${esc(it.title)}${short ? `, ${label}` : ""}</span></div>
         <div class="tm">${label}</div></div>`;
     }
@@ -410,10 +429,13 @@ function openDlg(item, preset = {}) {
   const parents = S.items.filter(i => i.kind === "task" && !i.parent_id && i.id !== e.id);
   $("#dParent").innerHTML = `<option value="">상위 할 일 없음</option>` + parents.map(p => `<option value="${p.id}">${esc(p.title).slice(0, 30)}</option>`).join("");
   $("#dParent").value = e.parent_id || "";
-  $("#dDel").style.visibility = item ? "visible" : "hidden";
-  $("#dErr").textContent = "";
+  const ro = e.source === "google";
+  $("#dDel").style.visibility = item && !ro ? "visible" : "hidden";
+  $("#dErr").textContent = ro ? "구글 캘린더에서 가져온 항목입니다. 수정, 삭제는 구글에서 해 주세요(완료 체크만 가능)." : "";
   setKind(e.kind, !item);
   syncTimeInputs();
+  document.querySelectorAll(".dlg input, .dlg select, .dlg textarea, .tabs button").forEach(el => { el.disabled = ro && el.id !== "dDone"; });
+  $("#dSave").style.display = ro && e.kind !== "task" ? "none" : "";
   $("#dlgBg").classList.add("on");
   setTimeout(() => $("#dTitle").focus(), 30);
 }
@@ -431,6 +453,11 @@ function syncTimeInputs() {
 function closeDlg() { $("#dlgBg").classList.remove("on"); S.edit = null; }
 async function saveDlg() {
   const e = S.edit, title = $("#dTitle").value.trim();
+  if (e.source === "google") {
+    try { if (e.kind === "task" && $("#dDone").checked !== !!e.done) await api("PATCH", `/items/${e.id}`, { done: $("#dDone").checked });
+      closeDlg(); await load(); } catch (err) { $("#dErr").textContent = err.message; }
+    return;
+  }
   if (!title) { $("#dErr").textContent = "제목을 입력하세요."; return; }
   const date = $("#dDate").value || null;
   const body = { title, notes: $("#dNotes").value, kind: e.kind, date, calendar_id: $("#dCal").value,
@@ -533,7 +560,14 @@ document.addEventListener("keydown", e => {
 });
 function scrollToNow() { const n = new Date(); $("#scroll").scrollTop = Math.max(0, (n.getHours() - 2) * HOUR); }
 
+$("#btnSync").onclick = async () => {
+  $("#sync").textContent = "구글에서 가져오는 중…";
+  const s = await api("POST", "/sync").catch(e => ({ ok: false, message: e.message }));
+  await load(); await syncStatus(); toast(s.ok ? "구글 동기화 완료" : s.message);
+};
 window.addEventListener("focus", poll);
+setInterval(syncStatus, 30000);
+syncStatus();
 window.addEventListener("resize", renderWeek);
 setInterval(poll, 3000);
 setInterval(() => { if (!S.edit) renderWeek(); }, 60000);
