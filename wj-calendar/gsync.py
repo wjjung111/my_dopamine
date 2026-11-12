@@ -6,6 +6,7 @@
 - 예외: 할 일 완료 체크는 우진 캘린더에서 눌러도 구글에 반영한다(set_task_done).
 """
 import base64
+import re
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -27,6 +28,7 @@ EVENT_COLORS = {
     "7": "#039be5", "8": "#616161", "9": "#3f51b5", "10": "#0b8043", "11": "#e8b400",
 }
 
+_TASK_LINK = re.compile(r"tasks\.google\.com/task/([A-Za-z0-9_-]+)")
 _lock = threading.Lock()
 STATUS = {"last": None, "ok": None, "message": "아직 동기화 안 함", "counts": {}}
 
@@ -150,10 +152,14 @@ def _sync() -> dict:
         for ev in evs:
             if ev.get("status") == "cancelled":
                 continue
-            if ev.get("eventType") == "focusTime" and ev.get("taskId") or ev.get("taskId"):
+            tid = ev.get("taskId")
+            if not tid:  # 원본 API에는 taskId가 없고 설명에 할 일 링크가 들어 있다
+                m = _TASK_LINK.search(ev.get("description") or "")
+                tid = m.group(1) if m else None
+            if tid:
                 st, en = ev.get("start", {}), ev.get("end", {})
                 if "dateTime" in st:
-                    focus[_task_id_from_event(ev["taskId"])] = {
+                    focus[_task_id_from_event(tid)] = {
                         "start": _local(st["dateTime"]), "end": _local(en.get("dateTime", st["dateTime"])),
                         "color": EVENT_COLORS.get(ev.get("colorId", "")),
                     }
