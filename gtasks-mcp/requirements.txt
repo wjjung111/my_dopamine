@@ -1,0 +1,4 @@
+﻿mcp<2
+google-auth
+google-auth-oauthlib
+requests
